@@ -1,0 +1,410 @@
+<title>Smart QR Scanner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: scanner card on the left, result + history stacked on the right; one column on phones. */
+:root {
+  --bg: #f2f8ff;
+  --surface: #ffffff;
+  --tint: #e8f2ff;
+  --tint-2: #d3e6ff;
+  --accent: #2a85f5;
+  --accent-strong: #1566cf;
+  --ink: #15304e;
+  --muted: #5f7894;
+  --ok: #178a5c;
+  --warn-bg: #fff3dd;
+  --warn-ink: #7d5200;
+  --err-bg: #ffe8ea;
+  --err-ink: #a2252b;
+  --stage: #0e1c2f;
+  --shadow: 0 8px 28px rgba(42, 133, 245, 0.12);
+  --font: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-head: "Space Grotesk", Inter, system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c1626; --surface: #13233a; --tint: #1a2f4b; --tint-2: #234169;
+    --accent: #5aa5ff; --accent-strong: #8cc0ff; --ink: #e6f0fc; --muted: #9bb2cc;
+    --ok: #4fd39b; --warn-bg: #3a2c10; --warn-ink: #f3cf8a; --err-bg: #3d1a1e; --err-ink: #ffb3b8;
+    --stage: #070f1b; --shadow: 0 8px 28px rgba(0, 0, 0, 0.4); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c1626; --surface: #13233a; --tint: #1a2f4b; --tint-2: #234169;
+  --accent: #5aa5ff; --accent-strong: #8cc0ff; --ink: #e6f0fc; --muted: #9bb2cc;
+  --ok: #4fd39b; --warn-bg: #3a2c10; --warn-ink: #f3cf8a; --err-bg: #3d1a1e; --err-ink: #ffb3b8;
+  --stage: #070f1b; --shadow: 0 8px 28px rgba(0, 0, 0, 0.4); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.5;
+  padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1020px; margin: 0 auto; }
+header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; color: var(--accent-strong); }
+header h1 { font-family: var(--font-head); font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); font-size: .9rem; }
+.grid { display: grid; gap: 18px; grid-template-columns: 1fr; }
+@media (min-width: 880px) { .grid { grid-template-columns: 1.35fr 1fr; align-items: start; } }
+.col { display: grid; gap: 18px; min-width: 0; }
+.card { background: var(--surface); border-radius: 18px; box-shadow: var(--shadow); padding: 18px; min-width: 0; }
+h2 { font-family: var(--font-head); font-size: 1.05rem; margin: 0 0 4px; }
+.sub { color: var(--muted); font-size: .85rem; margin: 0 0 12px; }
+
+/* Stage */
+.stage { position: relative; aspect-ratio: 1 / 1; max-height: 68vh; width: 100%; margin: 0 auto; background: var(--stage); border-radius: 14px; overflow: hidden; }
+.stage video, .stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.stage img { object-fit: contain; background: #fff; }
+.idle { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 4px; color: #cfe2fb; padding: 16px; }
+.idle b { font-family: var(--font-head); font-size: 1.1rem; font-weight: 600; }
+.idle span { opacity: .7; font-size: .85rem; }
+.frame { position: absolute; top: 50%; left: 50%; width: 62%; aspect-ratio: 1 / 1; transform: translate(-50%, -50%); border-radius: 14px; box-shadow: 0 0 0 100vmax rgba(8, 20, 38, .42); pointer-events: none; }
+.c { position: absolute; width: 32px; height: 32px; border: 4px solid #8cc0ff; transition: border-color .25s; }
+.c.tl { top: 0; left: 0; border-right: 0; border-bottom: 0; border-top-left-radius: 14px; }
+.c.tr { top: 0; right: 0; border-left: 0; border-bottom: 0; border-top-right-radius: 14px; }
+.c.bl { bottom: 0; left: 0; border-right: 0; border-top: 0; border-bottom-left-radius: 14px; }
+.c.br { bottom: 0; right: 0; border-left: 0; border-top: 0; border-bottom-right-radius: 14px; }
+.line { position: absolute; left: 6%; right: 6%; height: 3px; border-radius: 3px; background: linear-gradient(90deg, transparent, #8cc0ff, transparent); box-shadow: 0 0 12px #8cc0ff; animation: sweep 2s ease-in-out infinite; }
+@keyframes sweep { 0%, 100% { top: 8%; } 50% { top: 92%; } }
+.frame.hit .c { border-color: #4fd39b; }
+.frame.hit .line { display: none; }
+.pill { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(255,255,255,.93); color: #1566cf; font-weight: 600; font-size: .82rem; padding: 5px 14px; border-radius: 999px; white-space: nowrap; }
+.pill.ok { color: #178a5c; }
+
+/* Controls */
+.row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.btn { appearance: none; border: 0; cursor: pointer; font: inherit; font-weight: 600; font-size: .92rem; padding: 11px 18px; border-radius: 12px; text-decoration: none; text-align: center; display: inline-block; transition: transform .12s, background .2s; }
+.btn:active { transform: scale(.97); }
+.btn:focus-visible, .chip:focus-visible, li.h:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-strong); }
+.btn.soft { background: var(--tint); color: var(--accent-strong); }
+.btn.soft:hover { background: var(--tint-2); }
+.btn.go { background: var(--ok); color: #fff; }
+.btn.danger { background: var(--err-bg); color: var(--err-ink); padding: 6px 12px; font-size: .8rem; }
+.grow { flex: 1 1 140px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font: inherit; font-size: .84rem; font-weight: 600; border: 1px solid var(--tint-2); background: var(--tint); color: var(--accent-strong); padding: 6px 12px; border-radius: 999px; cursor: pointer; }
+.chip:hover { background: var(--tint-2); }
+.msg { margin-top: 14px; padding: 11px 14px; border-radius: 12px; background: var(--warn-bg); color: var(--warn-ink); font-size: .9rem; }
+.msg.err { background: var(--err-bg); color: var(--err-ink); }
+
+/* Result */
+.rhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
+.badge { background: var(--tint-2); color: var(--accent-strong); font-weight: 700; font-size: .78rem; padding: 3px 12px; border-radius: 999px; }
+.time { color: var(--muted); font-size: .8rem; }
+.rbody { background: var(--tint); border-radius: 12px; padding: 14px; overflow-wrap: anywhere; }
+.rbody .main { font-weight: 600; font-size: 1.02rem; }
+.rbody dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; }
+.rbody dt { color: var(--muted); font-size: .84rem; }
+.rbody dd { margin: 0; font-weight: 600; }
+
+/* History */
+.hhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+ul.hist { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; max-height: 420px; overflow-y: auto; }
+li.h { background: var(--tint); border-radius: 12px; padding: 9px 12px; cursor: pointer; min-width: 0; }
+li.h:hover { background: var(--tint-2); }
+li.h .t { font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-strong); }
+li.h .x { font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+li.h .d { font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.empty { color: var(--muted); font-size: .9rem; margin: 12px 0 0; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 9px 18px; border-radius: 10px; font-size: .88rem; }
+.note { color: var(--muted); font-size: .8rem; margin-top: 12px; }
+@media (prefers-reduced-motion: reduce) { .line { animation: none; top: 50%; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><path fill="currentColor" d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm10-2h2v2h-2v-2zm-2 2h2v2h-2v-2zm4 0h4v2h-4v-2zm-4 4h2v2h-2v-2zm4 0h2v4h-2v-4zm2-2h2v2h-2v-2z"/></svg>
+    <div><h1>Smart QR Scanner</h1><p>Decodes real QR codes from the camera, a photo or an image file.</p></div>
+  </header>
+
+  <div class="grid">
+    <div class="col">
+      <section class="card">
+        <div class="stage" id="stage">
+          <video id="video" playsinline muted hidden></video>
+          <img id="shot" alt="QR code being decoded" hidden>
+          <div class="idle" id="idle"><b>Camera is off</b><span>Start the scanner, take a photo, or try a sample code below</span></div>
+          <div class="frame" id="frame" hidden><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><i class="line"></i></div>
+          <div class="pill" id="pill" hidden></div>
+        </div>
+        <div class="row">
+          <button class="btn primary grow" id="startBtn">Start Scanner</button>
+          <button class="btn soft grow" id="stopBtn" hidden>Stop Scanner</button>
+          <label class="btn soft grow" for="photo">Take Photo / Choose Image</label>
+          <input id="photo" type="file" accept="image/*" capture="environment" hidden>
+        </div>
+        <div class="msg" id="msg" role="alert" hidden></div>
+      </section>
+
+      <section class="card">
+        <h2>Try a sample code</h2>
+        <p class="sub">Each button draws a real QR code and runs it through the same decoder.</p>
+        <div class="chips" id="chips"></div>
+        <p class="note">This preview page cannot open the live camera (the viewer blocks it). On a phone, “Take Photo” opens the camera and decodes the picture. The downloaded project (index.html + app.js + server.js) uses the live camera on localhost or HTTPS.</p>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="card" id="result" hidden>
+        <div class="rhead"><span class="badge" id="rType">Text</span><span class="time" id="rTime"></span></div>
+        <div class="rbody" id="rBody"></div>
+        <div class="row">
+          <button class="btn primary" id="copyBtn">Copy Content</button>
+          <a class="btn go" id="openBtn" href="#" target="_blank" rel="noopener noreferrer" hidden>Open Website</a>
+          <button class="btn soft" id="againBtn">Scan Again</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="hhead"><h2>Scan History</h2><button class="btn danger" id="clearBtn" hidden>Clear History</button></div>
+        <ul class="hist" id="hist"></ul>
+        <p class="empty" id="histEmpty">No scans yet.</p>
+      </section>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Space+Grotesk:wght@500;600&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const stage = $('stage'), video = $('video'), shot = $('shot'), idle = $('idle'), frame = $('frame'), pill = $('pill');
+  const msg = $('msg'), startBtn = $('startBtn'), stopBtn = $('stopBtn');
+  const KEY = 'smartQrHistory';
+  let stream = null, raf = 0, running = false, locked = false, last = 0, hint = 0, clearArmed = 0;
+  let detector = null;
+  const work = document.createElement('canvas');
+  const wctx = work.getContext('2d', { willReadFrequently: true });
+
+  /* ---------- Decoding ---------- */
+  function decodeCanvasData(img) {
+    const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
+    return code ? code.data : null;
+  }
+  function decodeImage(el) {
+    const w0 = el.naturalWidth || el.videoWidth || el.width, h0 = el.naturalHeight || el.videoHeight || el.height;
+    const k = Math.min(1, 900 / Math.max(w0, h0));
+    work.width = Math.round(w0 * k); work.height = Math.round(h0 * k);
+    wctx.fillStyle = '#fff'; wctx.fillRect(0, 0, work.width, work.height);
+    wctx.drawImage(el, 0, 0, work.width, work.height);
+    return decodeCanvasData(wctx.getImageData(0, 0, work.width, work.height));
+  }
+
+  /* ---------- Live camera ---------- */
+  async function setupDetector() {
+    if (detector !== null) return;
+    detector = false;
+    try {
+      if ('BarcodeDetector' in window && (await BarcodeDetector.getSupportedFormats()).includes('qr_code')) {
+        detector = new BarcodeDetector({ formats: ['qr_code'] });
+      }
+    } catch (_) {}
+  }
+  async function start() {
+    clearMsg(); resetStill();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return showMsg('This browser cannot open the camera here. Use Take Photo / Choose Image instead.', true);
+    startBtn.disabled = true;
+    try {
+      await setupDetector();
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      video.srcObject = stream; await video.play();
+    } catch (e) {
+      stop(); startBtn.disabled = false;
+      const n = e && e.name;
+      const t = (n === 'NotAllowedError' || n === 'SecurityError') ? 'Camera permission was denied or blocked by this preview. Use Take Photo / Choose Image, or allow the camera in your browser settings.'
+        : (n === 'NotFoundError' || n === 'OverconstrainedError') ? 'No camera was found on this device.'
+        : n === 'NotReadableError' ? 'The camera is in use by another app.' : 'Could not start the camera.';
+      return showMsg(t, true);
+    }
+    running = true; locked = false;
+    video.hidden = false; idle.hidden = true; frame.hidden = false; frame.classList.remove('hit');
+    setPill('Looking for a QR code…'); startBtn.hidden = true; startBtn.disabled = false; stopBtn.hidden = false;
+    $('result').hidden = true;
+    hint = setTimeout(() => { if (running && !locked) showMsg('No QR code detected yet. Hold it steady, in good light, inside the frame.'); }, 12000);
+    raf = requestAnimationFrame(tick);
+  }
+  function stop() {
+    running = false; cancelAnimationFrame(raf); clearTimeout(hint);
+    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+    video.pause(); video.srcObject = null; video.hidden = true;
+    if (shot.hidden) idle.hidden = false;
+    frame.hidden = true; pill.hidden = true; startBtn.hidden = false; stopBtn.hidden = true;
+  }
+  async function tick(ts) {
+    if (!running || locked) return;
+    raf = requestAnimationFrame(tick);
+    if (ts - last < 110 || video.readyState < 2 || !video.videoWidth) return; last = ts;
+    try {
+      let v = null;
+      if (detector) { const c = await detector.detect(video); v = c.length ? c[0].rawValue : null; }
+      else v = decodeImage(video);
+      if (v !== null && running && !locked) found(v, true);
+    } catch (_) {}
+  }
+
+  /* ---------- Found / still images ---------- */
+  function found(raw, live) {
+    locked = true; clearTimeout(hint); clearMsg();
+    frame.hidden = false; frame.classList.add('hit'); setPill('QR code detected ✓', true);
+    if (!raw || !raw.trim()) { setTimeout(stop, 300); return showMsg('Invalid QR code: it was detected but holds no readable data.', true); }
+    const p = parse(raw), entry = { id: Date.now(), time: new Date().toISOString(), type: p.type, raw };
+    setTimeout(() => { if (live) stop(); else { frame.hidden = true; pill.hidden = true; } showResult(p, entry); save(entry); }, 450);
+  }
+  function resetStill() { shot.hidden = true; shot.removeAttribute('src'); }
+  function showStill(url) {
+    return new Promise((res, rej) => {
+      shot.onload = () => res(shot); shot.onerror = () => rej(new Error('bad image'));
+      shot.src = url; shot.hidden = false; idle.hidden = true; video.hidden = true;
+    });
+  }
+  async function scanStill(url) {
+    clearMsg(); if (running) stop(); locked = false; $('result').hidden = true;
+    frame.hidden = false; frame.classList.remove('hit'); setPill('Decoding…');
+    try { await showStill(url); } catch (_) { frame.hidden = true; pill.hidden = true; return showMsg('That file could not be read as an image.', true); }
+    await new Promise((r) => setTimeout(r, 500));
+    let v = null;
+    try { v = decodeImage(shot); } catch (_) { return showMsg('Invalid image: it could not be decoded.', true); }
+    if (v === null) { frame.hidden = true; pill.hidden = true; return showMsg('No QR code detected in this image. Try a sharper, closer photo with the whole code visible.'); }
+    found(v, false);
+  }
+  $('photo').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const r = new FileReader(); r.onload = () => scanStill(r.result); r.readAsDataURL(f); e.target.value = '';
+  });
+
+  /* ---------- Samples (real QR codes generated on the fly) ---------- */
+  const SAMPLES = [
+    ['Website', 'https://www.anthropic.com'],
+    ['Wi-Fi', 'WIFI:T:WPA;S:Cafe Blue 5G;P:latte-2026;;'],
+    ['Contact', 'BEGIN:VCARD\nVERSION:3.0\nFN:Asha Rao\nORG:Blue Door Studio\nTEL:+91 98765 43210\nEMAIL:asha@bluedoor.example\nURL:https://bluedoor.example\nEND:VCARD'],
+    ['Payment', 'upi://pay?pa=bluedoor@upi&pn=Blue%20Door%20Studio&am=249.00&cu=INR&tn=Order%20118'],
+    ['Email', 'mailto:hello@bluedoor.example'],
+    ['Phone', 'tel:+919876543210'],
+    ['Text', 'Meet at gate 4 at 6:30 pm. Bring the printed pass.'],
+  ];
+  SAMPLES.forEach(([label, text]) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = label;
+    b.addEventListener('click', () => {
+      const q = qrcode(0, 'M'); q.addData(text, 'Byte'); q.make();
+      const n = q.getModuleCount(), cell = Math.max(4, Math.floor(480 / (n + 8))), size = (n + 8) * cell;
+      const c = document.createElement('canvas'); c.width = c.height = size;
+      const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, size, size); x.fillStyle = '#000';
+      for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (q.isDark(r, k)) x.fillRect((k + 4) * cell, (r + 4) * cell, cell, cell);
+      scanStill(c.toDataURL('image/png'));
+    });
+    $('chips').append(b);
+  });
+
+  /* ---------- Content types ---------- */
+  function delim(s) {
+    const o = {}; let k = '', v = '', ik = true, esc = false;
+    const flush = () => { if (k) o[k] = v; k = ''; v = ''; ik = true; };
+    for (const ch of s) {
+      if (esc) { ik ? (k += ch) : (v += ch); esc = false; continue; }
+      if (ch === '\\') { esc = true; continue; }
+      if (ik && ch === ':') { ik = false; continue; }
+      if (ch === ';') { flush(); continue; }
+      ik ? (k += ch) : (v += ch);
+    }
+    flush(); return o;
+  }
+  function parse(raw) {
+    const t = raw.trim(), u = t.toUpperCase();
+    if (u.startsWith('WIFI:')) { const f = delim(t.slice(5)); return { type: 'Wi-Fi', raw: t, fields: [['Network', f.S || '—'], ['Password', f.P || '(none)'], ['Security', f.T || 'Open'], ['Hidden', f.H === 'true' ? 'Yes' : 'No']] }; }
+    if (u.startsWith('BEGIN:VCARD')) {
+      const g = (k) => { const m = t.match(new RegExp('^' + k + '[^:\\r\\n]*:(.+)$', 'im')); return m ? m[1].trim() : ''; };
+      return { type: 'Contact', raw: t, fields: [['Name', g('FN') || '—'], ['Phone', g('TEL') || '—'], ['Email', g('EMAIL') || '—'], ['Organization', g('ORG').replace(/;/g, ' ') || '—'], ['Website', g('URL') || '—']] };
+    }
+    if (u.startsWith('MECARD:')) { const f = delim(t.slice(7)); return { type: 'Contact', raw: t, fields: [['Name', (f.N || '—').replace(',', ' ')], ['Phone', f.TEL || '—'], ['Email', f.EMAIL || '—']] }; }
+    if (/^upi:\/\//i.test(t) || /^(bitcoin|ethereum|litecoin):/i.test(t)) {
+      const q = {}; try { new URL(t).searchParams.forEach((v, k) => (q[k] = v)); } catch (_) {}
+      const fl = []; if (q.pn) fl.push(['Payee', q.pn]); if (q.pa) fl.push(['Payee address', q.pa]);
+      if (q.am) fl.push(['Amount', q.am + (q.cu ? ' ' + q.cu : '')]); if (q.tn) fl.push(['Note', q.tn]); fl.push(['Payment string', t]);
+      return { type: 'Payment', raw: t, fields: fl };
+    }
+    if (/^mailto:/i.test(t)) return { type: 'Email', raw: t, main: t.slice(7).split('?')[0] };
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(t)) return { type: 'Email', raw: t, main: t };
+    if (/^tel:/i.test(t)) return { type: 'Phone', raw: t, main: t.slice(4) };
+    if (/^\+?[\d\s().-]{7,18}$/.test(t) && t.replace(/\D/g, '').length >= 7) return { type: 'Phone', raw: t, main: t };
+    if (/^smsto?:/i.test(t)) { const [, n, ...m] = t.split(':'); return { type: 'SMS', raw: t, fields: [['Number', n || '—'], ['Message', m.join(':') || '—']] }; }
+    if (/^geo:/i.test(t)) return { type: 'Location', raw: t, main: t.slice(4) };
+    if (/^https?:\/\//i.test(t) || /^www\.\S+\.\S+$/i.test(t)) {
+      const url = /^www\./i.test(t) ? 'https://' + t : t;
+      try { new URL(url); return { type: 'URL', raw: t, main: t, url }; } catch (_) {}
+    }
+    return { type: 'Text', raw: t, main: t };
+  }
+
+  /* ---------- Result ---------- */
+  let current = '';
+  function showResult(p, entry) {
+    current = p.raw;
+    $('rType').textContent = p.type; $('rTime').textContent = fmt(entry.time);
+    const body = $('rBody'); body.replaceChildren();
+    if (p.fields) {
+      const dl = document.createElement('dl');
+      p.fields.forEach(([k, v]) => { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; dl.append(dt, dd); });
+      body.append(dl);
+    } else { const d = document.createElement('div'); d.className = 'main'; d.textContent = p.main; body.append(d); }
+    const o = $('openBtn');
+    if (p.url) { o.href = p.url; o.hidden = false; } else { o.hidden = true; o.href = '#'; }
+    $('result').hidden = false;
+  }
+  $('copyBtn').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(current); toast('Copied to clipboard'); }
+    catch (_) {
+      const ta = document.createElement('textarea'); ta.value = current; document.body.append(ta); ta.select();
+      let ok = false; try { ok = document.execCommand('copy'); } catch (_) {} ta.remove();
+      toast(ok ? 'Copied to clipboard' : 'Copy blocked here. Select the text and copy it.');
+    }
+  });
+  $('againBtn').addEventListener('click', () => { $('result').hidden = true; locked = false; resetStill(); clearMsg(); idle.hidden = false; frame.hidden = true; pill.hidden = true; start(); });
+  startBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', () => { stop(); clearMsg(); });
+
+  /* ---------- History (this browser only) ---------- */
+  function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch (_) { return []; } }
+  function save(e) { const l = load(); l.unshift(e); try { localStorage.setItem(KEY, JSON.stringify(l.slice(0, 50))); } catch (_) { mem.unshift(e); } render(); }
+  const mem = [];
+  function all() { const l = load(); return l.length ? l : mem.slice(0, 50); }
+  function render() {
+    const l = all(), ul = $('hist'); ul.replaceChildren();
+    $('histEmpty').hidden = l.length > 0; $('clearBtn').hidden = l.length === 0;
+    l.forEach((it) => {
+      const li = document.createElement('li'); li.className = 'h'; li.tabIndex = 0;
+      const a = document.createElement('div'); a.className = 't'; a.textContent = it.type;
+      const b = document.createElement('div'); b.className = 'x'; b.textContent = it.raw.replace(/\s+/g, ' ');
+      const c = document.createElement('div'); c.className = 'd'; c.textContent = fmt(it.time);
+      li.append(a, b, c);
+      const open = () => { if (running) stop(); showResult(parse(it.raw), it); };
+      li.addEventListener('click', open); li.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+      ul.append(li);
+    });
+  }
+  $('clearBtn').addEventListener('click', () => {
+    const b = $('clearBtn');
+    if (!clearArmed) { clearArmed = setTimeout(() => { clearArmed = 0; b.textContent = 'Clear History'; }, 3000); b.textContent = 'Tap again to confirm'; return; }
+    clearTimeout(clearArmed); clearArmed = 0; b.textContent = 'Clear History';
+    try { localStorage.removeItem(KEY); } catch (_) {} mem.length = 0; render(); toast('History cleared');
+  });
+
+  /* ---------- Helpers ---------- */
+  function fmt(iso) { return new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); }
+  function setPill(t, ok) { pill.textContent = t; pill.hidden = false; pill.classList.toggle('ok', !!ok); }
+  function showMsg(t, err) { msg.textContent = t; msg.classList.toggle('err', !!err); msg.hidden = false; }
+  function clearMsg() { msg.hidden = true; msg.textContent = ''; }
+  let tt = 0;
+  function toast(t) { const e = $('toast'); e.textContent = t; e.hidden = false; clearTimeout(tt); tt = setTimeout(() => (e.hidden = true), 2000); }
+  document.addEventListener('visibilitychange', () => { if (document.hidden && running) stop(); });
+  window.addEventListener('pagehide', stop);
+  render();
+})();
+</script>
